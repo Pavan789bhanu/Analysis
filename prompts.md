@@ -109,6 +109,103 @@ in the signal. Ground every statement in specific numbers from the data.
 
 ---
 
+---
+
+## Phase 2 Prompts -- Feature Engineering
+
+### Prompt 7 -- Publication Lag Analysis
+
+```
+Before engineering any features, document explicitly:
+which FRED monthly retail observations are available before Walmart reports each
+of its four fiscal quarters? Account for FRED's monthly release schedule
+(~14th of the following month) and Walmart's typical reporting calendar
+(2-4 weeks after fiscal quarter end).
+```
+
+**What worked:** The assistant correctly built the full schedule for all four fiscal quarters and identified that the LAST month of every quarter is borderline (advance estimate 3-4 days before Walmart reports). The core insight -- lag-1 is 100% safe, current-quarter is borderline -- was correctly identified.
+
+**What needed correction:** The initial framing said "current-quarter data is NOT available." This is too conservative -- the advance estimate IS published before Walmart reports. The correct nuance is: it's available but carries revision risk. Corrected to document this precisely.
+
+---
+
+### Prompt 8 -- Transformation Selection
+
+```
+Evaluate all six candidate transforms for the retail series: level, log-level,
+first difference, YoY%, QoQ%, log-YoY. For each: test stationarity (ADF + KPSS),
+explain economic meaning, and specify which is appropriate for use in a regression
+predicting Walmart YoY revenue growth.
+```
+
+**What worked:** Correctly identified I(1) issue for levels and log-levels. Recommended YoY% as primary. QoQ correctly flagged as stationary but noisy.
+
+**No push-back needed.**
+
+---
+
+### Prompt 9 -- Aggregation Method
+
+```
+Compare three aggregation approaches for converting monthly retail to Walmart
+fiscal quarters: sum, mean, and last-month. Show whether they produce different
+YoY growth rates and which is more predictive.
+```
+
+**What worked:** Correctly derived that sum and mean are mathematically identical for YoY ratios (constant 1/3 cancels). Last-month is noisier and slightly less predictive.
+
+**LLM initially glossed over the proof that sum=mean.** Required explicit verification.
+
+---
+
+### Prompt 10 -- Feature Group Engineering
+
+```
+Engineer all 12 feature groups: YoY retail growth, QoQ retail growth,
+aggregation, lagged features, rolling averages, rolling volatility,
+seasonal adjustments, z-score normalization, revenue momentum,
+interaction terms, regime indicators, and COVID indicator.
+For each: justify with economic intuition, specify leakage status,
+state expected predictive value.
+```
+
+**What worked:** All 12 groups were constructed correctly. The expanding-window z-score is a good catch -- using full-sample z-score would introduce leakage.
+
+**One failure caught:** The assistant initially generated a rolling 8Q mean feature and included it in the "recommended" set because it showed r=0.39 full-sample. This is a spurious signal -- pre-COVID r=0.07. The full-sample significance comes from the shared nominal trend (both series trend upward over 15 years), not consumer demand. Manual investigation required.
+
+---
+
+### Prompt 11 -- Incremental R² Analysis
+
+```
+Compare three nested OLS models on the pre-COVID dataset:
+A: AR(1) + seasonal dummies
+B: A + retail_lag1
+C: B + retail_lag2
+Report R², adj-R², AIC, and run a partial F-test for the incremental
+contribution of retail_lag1 controlling for the AR and seasonal baseline.
+```
+
+**What worked:** Partial F-test result (F=6.82, p=0.014) is the key quantitative evidence that retail adds real incremental information beyond what Walmart's own momentum and seasonality already predict. The assistant correctly set this up.
+
+**Correction required:** The assistant initially reported Delta R2 of ~0.16 in the summary text. Actual value from the model is Delta R2 = 0.085. The 0.16 was from an earlier version that used a different data subset (not properly filtered). Updated to 0.085 in all outputs.
+
+---
+
+### Prompt 12 -- VIF Analysis
+
+```
+Run VIF analysis for the minimal, extended, and regime-aware feature sets.
+Flag any VIF > 5. Explain what moderate collinearity (VIF ~3.5-4) means
+for model stability and coefficient interpretation.
+```
+
+**What worked:** VIF values correctly computed. VIF ~3.6 for both f_wmt_ar1 and f_retail_lag1 -- acceptable, not concerning, but explanation of widened CIs is important.
+
+**No push-back needed.**
+
+---
+
 ## Overall LLM Assessment
 
 **Got right:**
@@ -124,4 +221,11 @@ in the signal. Ground every statement in specific numbers from the data.
 3. **Regime contamination of full-sample statistics** — LLM initially framed near-zero full-sample r as "weak signal" rather than "signal destroyed by regime inversion."
 4. **Overconfident conclusion framing** — Required push-back to add "pre-COVID only" qualifier to the leading-indicator conclusion.
 
-**Reliability summary:** The LLM was a strong accelerator for code generation, test selection, and report structure. It required human oversight at every interpretive step — the numerical output was usually correct, but the framing and emphasis needed calibration.
+**Reliability summary:** The LLM was a strong accelerator for code generation, test selection, and report structure. It required human oversight at every interpretive step -- the numerical output was usually correct, but the framing and emphasis needed calibration.
+
+### Phase 2 Additions to Overall Assessment
+
+**Additional LLM failures caught in Phase 2:**
+1. **Spurious 8Q rolling mean signal**: LLM recommended including it based on full-sample r=0.39. Missed that this signal is entirely driven by shared nominal trend, not consumer behavior. Required explicit pre/post-COVID comparison to expose.
+2. **Delta R2 reporting error**: Initial summary text stated ~0.16 Delta R2; actual model output is 0.085. Overstatement of ~2x. Always verify summary statistics against the actual model output rather than accepting LLM's verbal description.
+3. **Publication lag framing**: LLM initially stated current-quarter FRED data is "unavailable" before Walmart reports. Too conservative -- advance estimate IS published 3-4 days prior. The correct nuance is "available but borderline." Distinction matters for practical deployment guidance.

@@ -68,6 +68,65 @@ RSXFS covers **all** U.S. retail. Walmart is primarily **essential** goods — f
 
 ---
 
+---
+
+## Phase 2 — Feature Engineering Decisions
+
+### Transformation Choice
+
+Both series are I(1) in levels — regressing levels on levels produces spurious results. **YoY % growth rate is the correct transform**: near-stationary, interpretable ("demand accelerating vs. last year"), and removes both trend and seasonal effects.
+
+### Aggregation
+
+Monthly retail sums to quarterly using Walmart's fiscal-calendar boundaries (Nov-Jan, Feb-Apr, May-Jul, Aug-Oct). Sum and mean are mathematically identical for YoY growth rate analysis. The **first month of the dataset (Jan 2010) was an incomplete quarter** — using it would create a spurious +220% YoY in 2011. Explicitly dropped.
+
+### Publication Lag
+
+The last month of every Walmart fiscal quarter is published by FRED approximately 3-4 days before Walmart reports earnings. All months are technically available, but the advance estimate carries ±0.5% revision risk. For a genuine **forecasting** application, only the **prior quarter's retail data (lag-1)** is entirely safe. For nowcasting on the day of earnings, the current-quarter sum is usable with documented caveats.
+
+### Recommended Feature Set
+
+**Five features for the minimal OLS model (pre-COVID):**
+
+| Feature | Type | r (pre-COVID) | Notes |
+|---|---|---|---|
+| `f_retail_lag1` | Retail YoY lag-1 | 0.78 ★ | Primary signal; 100% leakage-safe |
+| `f_wmt_ar1` | Walmart YoY lag-1 | 0.74 ★ | AR component; most stable predictor |
+| `f_q1/f_q2/f_q3` | Seasonal dummies | n/a | Essential: FY-Q4 is ~8% above FY mean |
+
+### Model Performance (Pre-COVID In-Sample)
+
+| Model | R² | Adj-R² | AIC |
+|---|---|---|---|
+| AR(1) + seasonal only | 0.564 | 0.504 | 134.8 |
+| **+ retail_lag1** | **0.649** | **0.587** | **129.4** |
+
+Adding `retail_lag1` increases R² by **+0.085**. Partial F-test: **F=6.82, p=0.014** — statistically significant incremental contribution. Coefficient: **0.74** (p=0.014), meaning a 1 pp higher retail YoY last quarter predicts 0.74 pp higher Walmart YoY this quarter, after controlling for AR and seasonality.
+
+### Features Rejected
+
+- **Rolling 8Q mean**: full-sample r=0.39 (significant) but pre-COVID r=0.07 — captures nominal trend/inflation, not consumer signal. **Spurious.**
+- **Rolling volatility (4Q std)**: r≈0 in both samples.
+- **QoQ growth lag-1**: r_pre=0.31 (marginal), high noise.
+- **Intra-quarter momentum**: r≈0, no value.
+- **Levels/log-levels**: I(1) — spurious regression.
+
+### Leakage Prevention Notes
+
+1. All lag features use `.shift(1)` or higher — no current-quarter retail data leaks into the feature.
+2. The regime indicator (`f_covid`) is flagged as hindsight-only — not deployable without a real-time regime-detection rule.
+3. The interaction term (`retail_lag1 × non-COVID`) inherits the hindsight caveat.
+4. Expanding-window z-score normalization uses only past data at each point in time.
+
+### Remaining Concerns After Phase 2
+
+- All model evidence is in-sample (pre-COVID). OOS performance on post-COVID data is unknown and is the key risk.
+- n=33 usable pre-COVID observations with 5 parameters gives adequate but not comfortable degrees of freedom.
+- f_wmt_ar1 and f_retail_lag1 are correlated (VIF ~3.6), widening individual coefficient confidence intervals even when joint fit is reasonable.
+- Post-COVID regime (2023+, n=13): signal has not recovered (r=0.12). The model's real-world deployability is currently unvalidated.
+
+---
+
 ## What This Means for Forecasting (Next Phase)
 
 The evidence supports building an **OLS model** on **pre-COVID data** using **retail YoY at 1-quarter lag** with **fiscal-quarter fixed effects**, evaluated on a proper **expanding-window out-of-sample test** (no shuffled k-fold). The model must be compared against a **seasonal-naive baseline** (same quarter last year). If it beats that baseline by more than 10% on MAPE in the out-of-sample window, the signal is practically useful. If not, the honest answer is that seasonality already explains most of what can be forecasted, and the retail leading indicator is not adding value at current data availability.
