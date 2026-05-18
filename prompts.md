@@ -223,6 +223,91 @@ for model stability and coefficient interpretation.
 
 **Reliability summary:** The LLM was a strong accelerator for code generation, test selection, and report structure. It required human oversight at every interpretive step -- the numerical output was usually correct, but the framing and emphasis needed calibration.
 
+---
+
+## Phase 3 Prompts -- Modeling and Evaluation
+
+### Prompt 13 -- Baseline Design
+
+```
+Design three baselines for evaluating whether retail sales improves
+Walmart revenue forecasting. Order them by difficulty to beat. Explain
+the intuition for each and why picking the right baseline matters.
+```
+
+**What worked:** Correctly identified that the AR-Only model (AR1 + seasonal) is the correct hard baseline, not just the seasonal naive. Correctly explained that an R-squared or RMSE improvement vs. the seasonal naive alone is insufficient -- Walmart's own history must be the comparison.
+
+**Correction required:** LLM initially proposed "seasonal decomposition residuals" as a baseline, which is not deployable in real-time (it uses future seasonality estimates). Replaced with expanding-mean-of-same-fiscal-quarter, which is fully causal.
+
+---
+
+### Prompt 14 -- Expanding-Window Validation Design
+
+```
+Implement an expanding-window (walk-forward) evaluation for the retail
+signal model. Minimum 20 training quarters. One-step-ahead only. Strict
+temporal ordering. Verify that all features (f_retail_lag1, f_wmt_ar1)
+use only data available before the prediction date. Report the first and
+last test quarter dates.
+```
+
+**What worked:** Validation design is clean and correct. The lag-1 shift verified against FRED publication schedule from Phase 2. Minimum training window justified (20 quarters = 5 parameters + 15 DOF).
+
+**LLM error caught:** Initial implementation had `pd.Timestamp(date_t)[:10]` (string slicing on a Timestamp object) which threw a TypeError. Fixed by converting numpy datetime64 to pd.Timestamp before string formatting. This is a common numpy/pandas type-mixing error.
+
+---
+
+### Prompt 15 -- Model Selection
+
+```
+Evaluate OLS, Ridge, and Lasso for this forecasting context:
+n=20-59 quarterly training observations, 5 predictors, moderate VIF (~3.6).
+Justify whether tree-based or SARIMAX models are appropriate.
+Recommend the simplest model that performs competitively.
+```
+
+**What worked:** Correctly ruled out tree-based models (n < 60, would massively overfit). Correctly identified that SARIMAX adds complexity without benefit here (AR component already in OLS features). Ridge was recommended over OLS for VIF ~3.6 -- slight regularization benefit.
+
+**Key finding from Prompt 15:** Ridge modestly outperforms OLS in every period (RMSE 2.92 vs 2.97 full-sample) but neither beats AR-Only (2.46). The VIF-driven coefficient instability is real but modest.
+
+---
+
+### Prompt 16 -- Metric Selection
+
+```
+Select evaluation metrics for a quarterly revenue YoY forecasting problem.
+Justify each metric. Explain why standard MAPE is problematic here.
+Recommend which metric should be the primary comparison.
+```
+
+**What worked:** Correctly identified that MAPE on YoY growth rates near zero is unstable (division by small numbers). Recommended RMSE as primary metric and sMAPE as secondary. Directional accuracy was split into two versions: sign of YoY (trivially high for Walmart, ~97%) and sign of change in YoY -- the latter is more discriminating.
+
+**Human judgment added:** The notebook presents both DirAcc variants but primary interpretation uses DirAccChg (change-in-YoY direction) since Walmart YoY is positive 90%+ of the time and trivial to predict in sign alone.
+
+---
+
+### Prompt 17 -- Results Interpretation
+
+```
+The expanding-window evaluation shows: OLS Signal RMSE=2.97 full-sample
+vs AR-Only RMSE=2.46. Pre-COVID: OLS=1.65 vs AR=1.42. COVID: OLS=4.24
+vs AR=3.15. Post-2023: OLS=2.64 vs AR=2.62. Interpret these results
+for a portfolio manager. State clearly whether retail adds value.
+```
+
+**What worked:** LLM correctly identified that the retail signal adds no value beyond AR-Only in any period. Post-2023 is essentially a tie (2.64 vs 2.62) with only 13 obs.
+
+**Critical LLM failure caught and corrected:** LLM initially drafted the conclusion as "retail sales is a useful leading indicator in normal times, beating the naive baseline by 5%." This was misleading because it compared to the seasonal naive (B1), not the AR-Only baseline (B3). The correct answer is that retail does NOT beat AR-Only even pre-COVID. The memo and conclusion section were rewritten to clearly distinguish "beats naive seasonality" from "beats own momentum" -- these are very different claims with different implications for production use.
+
+---
+
+### Phase 3 Additions to Overall Assessment
+
+**Additional LLM failures caught in Phase 3:**
+1. **Baseline conflation:** LLM framed the retail signal as "beating the naive baseline" using B1 (seasonal naive), when B3 (AR-Only) is the more appropriate comparison. Against B3, the retail signal consistently loses. Required explicit correction.
+2. **Timestamp type error:** `pd.Timestamp(date_t)[:10]` -- numpy datetime64 is not subscriptable. Caught during execution. Fixed by explicit conversion.
+3. **Overly optimistic post-COVID framing:** LLM emphasized "20% RMSE improvement post-2023" without noting n=13 and that AR-Only is essentially tied. Required qualification.
+
 ### Phase 2 Additions to Overall Assessment
 
 **Additional LLM failures caught in Phase 2:**

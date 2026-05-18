@@ -127,10 +127,72 @@ Adding `retail_lag1` increases R² by **+0.085**. Partial F-test: **F=6.82, p=0.
 
 ---
 
-## What This Means for Forecasting (Next Phase)
+---
 
-The evidence supports building an **OLS model** on **pre-COVID data** using **retail YoY at 1-quarter lag** with **fiscal-quarter fixed effects**, evaluated on a proper **expanding-window out-of-sample test** (no shuffled k-fold). The model must be compared against a **seasonal-naive baseline** (same quarter last year). If it beats that baseline by more than 10% on MAPE in the out-of-sample window, the signal is practically useful. If not, the honest answer is that seasonality already explains most of what can be forecasted, and the retail leading indicator is not adding value at current data availability.
+## Phase 3 — Forecasting Results
+
+### Methodology
+
+**Expanding-window (walk-forward) validation.** Train on all available history through quarter *t*, forecast quarter *t+1*, repeat. Minimum 20 training quarters before first forecast. No shuffled splits. All features use only data observable before Walmart reports (lag-1 retail is 100% safe per Phase 2 publication-lag audit).
+
+**39 out-of-sample test quarters** (Jul 2016 – Jan 2026): 14 pre-COVID, 12 COVID/recovery, 13 post-2023.
+
+### Baselines
+
+| Baseline | Description | Role |
+|---|---|---|
+| B1: Seasonal Naive | Expanding mean of same fiscal quarter's YoY | Naive benchmark |
+| B2: Historical Mean | Expanding overall mean of Walmart YoY | Flat benchmark |
+| B3: AR-Only OLS | AR(1) + seasonal dummies; uses Walmart own history | Hard benchmark |
+
+### Model Performance (Out-of-Sample RMSE in percentage points)
+
+| Model | Full | Pre-COVID | COVID | Post-2023 |
+|---|---|---|---|---|
+| Seasonal Naive [B1] | 2.85 | 1.74 | 3.35 | 3.28 |
+| AR-Only OLS [B3] | **2.46** | **1.42** | **3.15** | **2.62** |
+| OLS Signal [M1] | 2.97 | 1.65 | 4.24 | 2.64 |
+| Ridge Signal [M2] | 2.92 | 1.59 | 4.16 | 2.63 |
+
+Bold = best in each period.
+
+### The Answer to the Business Question
+
+**Does retail sales predict Walmart revenue better than a naive baseline?**
+
+- **vs. Seasonal Naive (B1):** Yes in pre-COVID (+5% RMSE improvement) and post-2023 (+20%). No during COVID (35% worse). Even-ish full-sample.
+- **vs. AR-Only (B3, the honest baseline):** No — consistently worse in every period. Full-sample: OLS Signal RMSE=2.97 vs AR-Only RMSE=2.46 (-21%). Pre-COVID: 1.65 vs 1.42 (-16%).
+
+**The retail signal does not beat Walmart's own momentum once AR(1)+seasonal is included as the baseline.** The AR-only model — using only Walmart's own history and seasonal effects — outperforms every retail-augmented model in every period.
+
+### Why Retail Fails to Beat AR-Only
+
+1. **COVID inversion:** Retail crashed 17% in Apr 2020; Walmart held up (essential goods). Retail lag-1 transmitted the wrong signal during COVID, causing OLS Signal RMSE to spike to 4.24 vs AR-Only's 3.15.
+2. **Shared macro driver:** Both retail and Walmart respond to the same GDP/employment cycle. Once Walmart's own AR captures that shared signal, retail adds noise, not information.
+3. **Directional accuracy:** AR-Only correctly predicts acceleration/deceleration more often than OLS Signal in every regime.
+
+### Caveats and Worries
+
+1. **COVID instability is the primary risk.** Any model using retail as an input must handle the event that retail crashes but Walmart does not — or vice versa.
+2. **Small sample.** 14 pre-COVID and 13 post-2023 OOS quarters. Directional conclusions are robust but individual RMSE comparisons have wide confidence bands.
+3. **Post-2023 is tentatively favorable.** OLS Signal and AR-Only are nearly tied (2.64 vs 2.62) post-2023. With 8 more quarters of clean data, this could justify revisiting the retail signal.
+4. **Inflation confound post-2021.** Both series carry nominal effects. A common inflation factor may inflate apparent correlation without signaling real demand.
+
+### Recommendation
+
+**Use AR-Only (Walmart AR1 + seasonal dummies) as the production baseline.** It outperforms every retail-augmented model and requires no external data.
+
+**Keep monitoring the retail signal** as a supplementary indicator: track rolling correlation between retail YoY lag-1 and Walmart YoY. If it exceeds 0.5 sustained over 8 quarters post-2023, re-test whether adding retail materially improves the AR model.
+
+**Do not add retail to a production model** until it demonstrably beats the AR-Only baseline on a further 2+ years of post-COVID OOS data.
+
+### What Evidence Would Change Our Conclusion
+
+1. Post-2023 rolling correlation recovering to 0.5+ sustained over 8 quarters.
+2. OOS RMSE improvement >10% over AR-Only on the 2023-2026 window (need ~6 more quarters).
+3. General-merchandise FRED subsector (RSGCSN) showing tighter, more stable lag relationship.
+4. Regime-switching model that automatically suppresses retail during stress events.
 
 ---
 
-*This memo covers Phase 1 (Data Audit) through Phase 4 (EDA Summary). Modeling results will follow.*
+*Analysis complete. Phases 1-4 (EDA), Phase 2 (Feature Engineering), and Phase 3 (Modeling and Evaluation) are all documented in analysis.ipynb.*
