@@ -1,0 +1,61 @@
+name: Combine Dev and Dev-2 into Main
+
+on:
+  workflow_dispatch: # Allows you to trigger this manually with a button click
+
+jobs:
+  bundle-folders:
+    runs-on: ubuntu-latest
+    steps:
+      # 1. Checkout the target destination branch (main)
+      - name: Checkout main branch
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: main_branch
+
+      # 2. Checkout the Dev branch source files
+      - name: Checkout Dev branch
+        uses: actions/checkout@v4
+        with:
+          ref: Dev
+          path: source_dev
+
+      # 3. Checkout the Dev-2 branch source files
+      - name: Checkout Dev-2 branch
+        uses: actions/checkout@v4
+        with:
+          ref: Dev-2
+          path: source_dev2
+
+      # 4. Create separate folders inside main and copy the files
+      - name: Restructure files into subdirectories
+        run: |
+          # Create fresh target directories inside the main branch workspace
+          mkdir -p main_branch/Dev
+          mkdir -p main_branch/Dev-2
+
+          # Clean out any old instances of these folders to prevent overlap artifacts
+          rm -rf main_branch/Dev/*
+          rm -rf main_branch/Dev-2/*
+
+          # Sync everything from the source checkouts into their specific folders
+          # (Excludes hidden git data and tracking files)
+          rsync -av --exclude='.git' --exclude='.github' source_dev/ main_branch/Dev/
+          rsync -av --exclude='.git' --exclude='.github' source_dev2/ main_branch/Dev-2/
+
+      # 5. Commit these new folders directly into the main branch
+      - name: Commit and Push Changes to Main
+        run: |
+          cd main_branch
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          
+          git add Dev/ Dev-2/
+          
+          if ! git diff --cached --quiet; then
+            git commit -m "Add full datasets from Dev and Dev-2 branches into side-by-side subdirectories"
+            git push origin main
+          else
+            echo "No directory updates detected."
+          fi
