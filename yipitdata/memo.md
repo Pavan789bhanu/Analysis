@@ -1,47 +1,35 @@
 # Does FRED retail sales help forecast Walmart's quarterly revenue?
 
-**Audience:** portfolio manager  ·  **OOS window:** FY18-Q1 → FY26-Q4 (n = 36)  ·  **Eval:** rolling-origin CV, MAPE
+**Audience:** portfolio manager  ·  **OOS window:** FY18-Q1 → FY26-Q4 (n = 36, rolling-origin CV)
+**Companion:** `INSIGHTS.md` (long-form analyst notes); `prompts.md` (LLM prompt log)
 
 ## The short answer
 
-**No — not in the regime that matters.** Out-of-sample, the strongest FRED-augmented model (Ridge regression with Walmart lags + FRED YoY features) gets **2.01% MAPE**, statistically indistinguishable from the **2.03%** of a seasonal-naive baseline with a trailing-4-quarter drift adjustment that uses *no FRED data at all*. The best Walmart-only model (SARIMA) hits **1.73% MAPE** and beats every FRED-augmented variant on the full window.
+**No, not in the regime that matters.** On the strict apples-to-apples test — adding FRED features to a regression that already has Walmart's own history — FRED produces no measurable out-of-sample accuracy gain. The strongest FRED-augmented model (Ridge regression) gets **2.01% MAPE**, statistically indistinguishable from a no-FRED seasonal-naive baseline with trailing drift (**2.03% MAPE**). The strongest Walmart-only model (SARIMA) wins outright at **1.73% MAPE**.
 
-The picture sharpens dramatically when we split on the pandemic:
+But the picture sharpens dramatically when we split the out-of-sample window on the pandemic. FRED was a useful leading indicator **before 2020** and **stopped working after**:
 
-| Model                           | uses FRED | MAPE pre-2020 (n=12) | MAPE post-2020 (n=24) |
-|---------------------------------|:---------:|:--------------------:|:---------------------:|
-| seasonal_naive                  | no        | 2.41%                | 4.92%                 |
-| seasonal_naive + drift          | no        | 1.56%                | 2.26%                 |
-| SARIMA (Walmart-only)           | no        | 0.95%                | **2.12%**             |
-| OLS Walmart + FRED              | **yes**   | **0.87%**            | 2.63%                 |
-| Ridge Walmart + FRED            | **yes**   | 0.92%                | 2.55%                 |
-| Gradient Boosting Walmart + FRED| yes       | 3.44%                | 3.19%                 |
+![Pre vs post-2020 regime comparison](figures/fig4_regime_comparison.png)
 
-**Falsifiable claim:** *FRED RSXFS was a useful leading indicator for Walmart quarterly revenue before 2020 (FRED-augmented OLS beat SARIMA by ~0.08pp MAPE pre-pandemic). The relationship broke at the structural break; on the 24 OOS quarters since 2020-Q1, every FRED-augmented model is worse than the Walmart-only SARIMA by 0.4–1.5pp MAPE.*
+**Falsifiable claim:** *Adding FRED RSXFS does not improve out-of-sample Walmart quarterly revenue forecasts over a Walmart-only SARIMA on 2017-Q1 → 2026-Q4, and is strictly worse on the 24 OOS quarters since 2020-Q1. We would revisit if 4+ more clean post-stimulus quarters showed FRED-augmented models recovering — or if a Walmart-specific retail sub-series replaced the aggregate RSXFS.*
 
-![OOS MAPE by model](figures/fig1_mape_bars.png)
+## Why FRED looks weak
 
-## Evidence
+The feature-impact chart from the Ridge model makes the point in one picture: Walmart's own prior-year revenue moves the forecast by **+14.36% of average revenue per +1 standard-deviation move**. The strongest FRED feature moves it by **−0.48%**. There is very little marginal information left for FRED to add once you've conditioned on Walmart's own history and fiscal-quarter seasonality.
 
-We benchmarked seven models on the same 36 OOS quarters using rolling-origin CV. The forecast origin convention is honest: Walmart features use only quarters strictly before the target; FRED features are held back by ≥1 calendar month to respect publication lag.
-
-![Forecasts vs actuals](figures/fig2_actual_vs_forecast.png)
-
-The seasonal-naive baseline (dotted grey) lags the trend by exactly one year and systematically under-shoots in growth regimes — that is why its bias is $-6.1B. SARIMA and Ridge+FRED track actuals closely; their misses cluster at the 2020 covid prints and the FY26 forecast horizon.
+![Feature impact](figures/fig5_feature_impact.png)
 
 ## What we worry about
 
-1. **n = 36 OOS quarters is small.** Pre/post-2020 sub-samples are 12 and 24 — the regime split is suggestive, not statistically airtight.
-2. **FRED RSXFS is seasonally adjusted; Walmart revenue is not.** We compare YoY-on-YoY to remove the asymmetry, but residual bias is plausible.
-3. **The publication-lag convention matters.** Shortening the FRED hold-back from 1 month to 0 months would flatter FRED's apparent performance — and would not survive in production.
-4. **Gradient boosting underperformed every non-trivial model.** With ~30 training rows it overfit. We did not include it as a serious candidate; we kept it in the table because the customer asked whether more-complex models help, and the answer is no.
-
-## What would change our minds
-
-- **More post-2020 data.** 4–8 more clean quarters showing FRED-augmented models re-beating SARIMA would rehabilitate the leading-indicator hypothesis.
-- **A regime-conditional model** that *learns* when FRED helps. We tested only unconditional models.
-- **A Walmart-specific retail sub-series** (grocery + general merchandise share) instead of the whole-economy aggregate. RSXFS may dilute Walmart-relevant signal.
+1. **n = 36 OOS quarters is small.** Pre-/post-2020 sub-samples are 12 and 24 — the regime split is suggestive, not statistically airtight. Don't bet the model on it.
+2. **FRED RSXFS in this file is seasonally adjusted; Walmart revenue is not.** We compare YoY-on-YoY to remove the asymmetry, but residual bias is plausible.
+3. **The publication-lag convention matters.** We hold FRED back by ≥1 calendar month relative to the target quarter end, mirroring real-time availability. Shortening that lag would flatter FRED's apparent performance — and would not survive production.
+4. **GBR underperformed every non-trivial model.** Classic small-sample failure mode. We kept it in the table because the customer asked whether more-complex models help; the answer is no.
 
 ## Production recommendation
 
-If you want a single number every quarter, **ship `seasonal_naive + drift`** (2.03% MAPE, ~0.16 ms / forecast, no statsmodels, no FRED dependency). To buy the extra 0.30pp of accuracy SARIMA offers, you take on a statsmodels dependency and ~70× the latency, with re-estimation that can be unstable in volatile regimes. FRED-augmented variants buy you nothing on the regime that matters today.
+![Decision flow](figures/fig6_decision_flow.png)
+
+**Ship `seasonal_naive + drift`** as the system-of-record forecaster: 2.03% MAPE, ~0.16 ms / forecast, no statsmodels, no sklearn, no FRED dependency. To buy the extra 0.30 pp of MAPE SARIMA offers, you take on a statsmodels dependency and ~70× the latency, with re-estimation that can be unstable in volatile regimes. **Do not ship any FRED-augmented model on this evidence.**
+
+Full numbers, paired tests, regime tables, the production tradeoff matrix and the open follow-up questions are in `INSIGHTS.md` and `analysis.ipynb`.

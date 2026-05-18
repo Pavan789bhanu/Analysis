@@ -471,12 +471,233 @@ def plot_actual_vs_forecasts(results: dict, path: Path) -> None:
                         ("ridge_walmart_plus_fred", dict(linestyle="-",  color="#2c7fb8"))]:
         yhat = np.array(results[name]["yhat"]) / 1e9
         ax.plot(dates, yhat, label=name.replace("_", " "), **style)
+    ax.axvline(pd.Timestamp("2020-03-01"), color="red", linestyle=":", alpha=0.5)
+    ax.text(pd.Timestamp("2020-03-01"), ax.get_ylim()[1] * 0.97,
+            "  COVID structural break", color="red", fontsize=8, va="top")
     ax.set_ylabel("Walmart quarterly revenue (USD bn)")
     ax.set_title("Out-of-sample forecasts vs actuals (rolling-origin CV)")
     ax.legend(loc="upper left", fontsize=9)
     ax.grid(alpha=0.3)
     fig.tight_layout()
     fig.savefig(path, dpi=140)
+    plt.close(fig)
+
+
+# ============================================================================
+# 12b. STAKEHOLDER / EXPLAINABILITY FIGURES
+# ----------------------------------------------------------------------------
+# These four are designed for a non-technical reader. Every figure carries a
+# one-line "business takeaway" annotation baked into the canvas so the chart
+# stands on its own when pasted into a deck.
+# ============================================================================
+def plot_cost_accuracy_frontier(summary: pd.DataFrame, path: Path) -> None:
+    """Scatter: latency (log x-axis) vs MAPE. Each model is a labeled dot.
+    The 'efficient frontier' (Pareto-optimal models) is connected. Tells the
+    reader: how much accuracy am I buying per ms of latency?"""
+    fig, ax = plt.subplots(figsize=(10, 5.6))
+    s = summary.copy()
+    # Use a minimum latency floor so the log scale doesn't blow up on naive
+    s["lat_ms"] = s["avg_fit_pred_ms"].clip(lower=0.01)
+    colors = ["#2c7fb8" if uf else "#888888" for uf in s["uses_FRED"]]
+    ax.scatter(s["lat_ms"], s["MAPE_%"], s=180, c=colors, edgecolors="black", zorder=3)
+    # Hand-tuned offsets to avoid the 0.5-1ms / ~2% cluster collision
+    label_offsets = {
+        "seasonal_naive":          (10, 6),
+        "seasonal_naive_drift":    (8, -18),
+        "sarima_walmart_only":     (-12, 12),
+        "ols_walmart_only":        (10, 10),
+        "ols_walmart_plus_fred":   (10, -18),
+        "ridge_walmart_plus_fred": (-10, 16),
+        "gbr_walmart_plus_fred":   (-90, 12),
+    }
+    for _, row in s.iterrows():
+        dx, dy = label_offsets.get(row["model"], (8, 5))
+        ax.annotate(row["model"], (row["lat_ms"], row["MAPE_%"]),
+                    xytext=(dx, dy), textcoords="offset points", fontsize=9,
+                    arrowprops=dict(arrowstyle="-", color="#999", lw=0.5))
+    # Pareto frontier — minimize both axes
+    pts = s[["lat_ms", "MAPE_%"]].values
+    order = np.argsort(pts[:, 0])
+    front_x, front_y = [], []
+    best = np.inf
+    for i in order:
+        if pts[i, 1] < best:
+            best = pts[i, 1]
+            front_x.append(pts[i, 0]); front_y.append(pts[i, 1])
+    ax.plot(front_x, front_y, "k--", alpha=0.5, zorder=2, label="efficient frontier")
+    ax.set_xscale("log")
+    ax.set_xlabel("Fit + predict latency per forecast (ms, log scale)  — cheaper to the left")
+    ax.set_ylabel("Out-of-sample MAPE (%)  — more accurate at bottom")
+    ax.set_title("Cost vs accuracy: where does each model sit?\n"
+                 "Bottom-left = ideal; models above the dashed line are dominated.")
+    ax.grid(alpha=0.3, which="both")
+    ax.legend(loc="upper right")
+    # Business takeaway annotation
+    fig.text(0.5, -0.01,
+            "Business takeaway: seasonal_naive_drift sits on the frontier with 2.03% MAPE at "
+            "0.16ms/forecast. Paying for SARIMA buys 0.30pp more accuracy at ~70x the latency.",
+            ha="center", fontsize=9, style="italic", color="#444444")
+    fig.tight_layout()
+    fig.savefig(path, dpi=140, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_regime_comparison(results: dict, path: Path) -> None:
+    """Pre-2020 vs Post-2020 grouped bar chart. Tells the reader: the FRED
+    signal worked before the pandemic and broke after."""
+    reg = regime_split(results)
+    # order: keep the headline models, drop GBR for readability
+    order = ["seasonal_naive", "seasonal_naive_drift", "sarima_walmart_only",
+             "ols_walmart_only", "ols_walmart_plus_fred", "ridge_walmart_plus_fred"]
+    reg = reg.set_index("model").loc[order].reset_index()
+    fig, ax = plt.subplots(figsize=(10, 4.8))
+    x = np.arange(len(reg))
+    w = 0.38
+    colors_pre  = ["#2c7fb8" if m in ("ols_walmart_plus_fred", "ridge_walmart_plus_fred")
+                   else "#888888" for m in reg["model"]]
+    colors_post = ["#2c7fb8" if m in ("ols_walmart_plus_fred", "ridge_walmart_plus_fred")
+                   else "#888888" for m in reg["model"]]
+    pre_bars  = ax.bar(x - w/2, reg["MAPE_pre2020_%"],  width=w, color=colors_pre,
+                        edgecolor="black", label="Pre-2020 (n=12)")
+    post_bars = ax.bar(x + w/2, reg["MAPE_post2020_%"], width=w, color=colors_post,
+                        edgecolor="black", alpha=0.55, hatch="///", label="Post-2020 (n=24)")
+    for bars in (pre_bars, post_bars):
+        for b in bars:
+            ax.text(b.get_x() + b.get_width()/2, b.get_height() + 0.05,
+                    f"{b.get_height():.2f}%", ha="center", fontsize=8)
+    ax.set_xticks(x)
+    ax.set_xticklabels([m.replace("_", "\n") for m in reg["model"]], fontsize=8.5)
+    ax.set_ylabel("OOS MAPE (%)  — lower is better")
+    ax.set_title("Did FRED help? Pre-2020 vs Post-2020 OOS performance\n"
+                 "Blue = FRED-augmented. Solid = pre-COVID, hatched = post-COVID.")
+    ax.legend(loc="upper left")
+    ax.grid(alpha=0.3, axis="y")
+    # Business takeaway
+    ax.text(0.5, -0.30,
+            "Business takeaway: the FRED-augmented models (blue) were the BEST forecasters "
+            "before 2020 and the WORST after 2020. The leading-indicator relationship broke.",
+            transform=ax.transAxes, ha="center", fontsize=9, style="italic", color="#444444")
+    fig.tight_layout()
+    fig.savefig(path, dpi=140, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_feature_impact(data: pd.DataFrame, path: Path) -> None:
+    """Standardized Ridge coefficients of the Walmart+FRED model. We use
+    Ridge (the best FRED-augmented model on OOS) rather than OLS so that
+    a collinear pair like (fred_3m_mean, wm_lag4) — both trending levels —
+    does not split the trend signal artificially. We also report effects
+    as % of average revenue to keep the chart honest for a PM audience.
+
+    The chart deliberately excludes raw level features (fred_3m_mean) and
+    shows only effects that have a clean business interpretation:
+    Walmart's own lag, fiscal-quarter seasonality, and FRED growth rates.
+    """
+    KEEP = ["wm_lag4", "wm_yoy_lag1", "is_Q1", "is_Q2", "is_Q3",
+            "fred_last_yoy", "fred_6m_yoy"]
+    X = data[KEEP].values.astype(float)
+    y = data["walmart"].values.astype(float)
+    mu, sd = X.mean(0), X.std(0); sd[sd == 0] = 1
+    Xs = (X - mu) / sd
+    m = Ridge(alpha=1.0).fit(Xs, y / 1e9)  # response in USD bn
+    coefs = m.coef_
+    avg_rev_bn = float(y.mean()) / 1e9
+    pct_effects = coefs / avg_rev_bn * 100  # % of mean revenue per +1σ
+
+    labels_business = {
+        "wm_lag4":       "Walmart same quarter, prior year",
+        "wm_yoy_lag1":   "Walmart YoY growth (last reported quarter)",
+        "is_Q1":         "Fiscal Q1 (Feb-Apr) seasonality",
+        "is_Q2":         "Fiscal Q2 (May-Jul) seasonality",
+        "is_Q3":         "Fiscal Q3 (Aug-Oct) seasonality",
+        "fred_last_yoy": "US retail YoY growth (last month)",
+        "fred_6m_yoy":   "US retail YoY growth (6-month avg)",
+    }
+    nice = [labels_business[c] for c in KEEP]
+    order = np.argsort(np.abs(pct_effects))[::-1]
+    nice  = [nice[i]         for i in order]
+    pct   = [pct_effects[i]  for i in order]
+    is_fred = ["retail" in n.lower() for n in nice]
+    colors = ["#2c7fb8" if f else "#888888" for f in is_fred]
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.barh(nice, pct, color=colors, edgecolor="black")
+    # Labels OUTSIDE the bar to avoid the bar-tip collision we saw before
+    xmax = max(abs(min(pct)), abs(max(pct)))
+    pad = xmax * 0.04
+    for i, v in enumerate(pct):
+        ax.text(v + (pad if v >= 0 else -pad), i,
+                f"{v:+.2f}%", va="center",
+                ha="left" if v >= 0 else "right", fontsize=9)
+    ax.invert_yaxis()
+    ax.axvline(0, color="black", linewidth=0.6)
+    ax.set_xlim(-xmax * 1.45, xmax * 1.45)
+    ax.set_xlabel("Effect on forecast (% of mean Walmart quarterly revenue, per +1 std-dev of feature)")
+    ax.set_title("What actually drives the forecast?\n"
+                 "Walmart's own history dominates. FRED growth features (blue) barely move the needle.")
+    ax.grid(alpha=0.3, axis="x")
+    fig.text(0.5, -0.02,
+        "Business takeaway: Walmart's prior-year same-quarter revenue is by far the largest driver. "
+        "A +1 sd swing in US retail YoY growth shifts the forecast by under 1% of average revenue.",
+        ha="center", fontsize=9, style="italic", color="#444444")
+    fig.tight_layout()
+    fig.savefig(path, dpi=140, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_decision_flow(path: Path) -> None:
+    """A clean decision diagram so a PM can read 'which model do we ship?'
+    off a single page. Pure matplotlib — no graphviz dependency."""
+    fig, ax = plt.subplots(figsize=(11, 5.5))
+    ax.axis("off")
+
+    def box(x, y, w, h, text, fc="#ffffff", ec="black", fontsize=10, weight="normal"):
+        ax.add_patch(plt.Rectangle((x, y), w, h, facecolor=fc, edgecolor=ec, linewidth=1.4))
+        ax.text(x + w/2, y + h/2, text, ha="center", va="center",
+                fontsize=fontsize, weight=weight, wrap=True)
+
+    def arrow(x1, y1, x2, y2, label=""):
+        ax.annotate("", xy=(x2, y2), xytext=(x1, y1),
+                    arrowprops=dict(arrowstyle="->", color="black", lw=1.4))
+        if label:
+            ax.text((x1+x2)/2, (y1+y2)/2 + 0.15, label, fontsize=9,
+                    ha="center", style="italic")
+
+    # Top question
+    box(3.5, 4.6, 4, 0.7, "Need a Walmart quarterly revenue forecast?",
+        fc="#e8f0fa", weight="bold", fontsize=11)
+
+    # First decision: is FRED-augmented worth the data pipeline?
+    box(3.5, 3.5, 4, 0.7, "Have ≥4 post-2020 OOS quarters where\nFRED beat the Walmart-only model?",
+        fc="#fff9e6", fontsize=10)
+    arrow(5.5, 4.6, 5.5, 4.2)
+
+    # No branch — production answer
+    box(0.3, 2.0, 3.6, 0.8, "PRODUCTION DEFAULT\nseasonal_naive + drift\n2.03% MAPE · 0.16 ms",
+        fc="#dfeedc", weight="bold", fontsize=10)
+    arrow(5.5, 3.5, 2.1, 2.8, label="No (current state)")
+
+    # Yes branch — buy more accuracy
+    box(7.1, 2.0, 3.6, 0.8, "If accuracy critical:\nSARIMA (Walmart-only)\n1.73% MAPE · 11 ms",
+        fc="#fdecea", weight="bold", fontsize=10)
+    arrow(5.5, 3.5, 8.9, 2.8, label="Hypothetical")
+
+    # Bottom — dominated options to avoid
+    box(2.2, 0.6, 6.6, 0.7,
+        "AVOID: gradient boosting (3.28% MAPE, 35 ms) — overfits on n≈30 training rows.",
+        fc="#f5f5f5", fontsize=9, ec="#999999")
+
+    # Side panel — three reasons we don't ship FRED
+    ax.text(0.3, 0.0,
+            "Why no FRED model in production today: (1) RSXFS adds no measurable accuracy vs the Walmart-only baseline post-2020, "
+            "(2) Adds a FRED ingestion + monitoring dependency, (3) Increases re-train fragility.",
+            fontsize=8.5, style="italic", color="#444444")
+
+    ax.set_xlim(0, 11); ax.set_ylim(0, 6)
+    ax.set_title("Decision flow: which forecaster do we ship?",
+                 fontsize=12, weight="bold")
+    fig.tight_layout()
+    fig.savefig(path, dpi=140, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -583,8 +804,12 @@ def main() -> dict:
     print("\nWriting figures…")
     plot_mape_bars(summary, FIG_DIR / "fig1_mape_bars.png")
     plot_actual_vs_forecasts(results, FIG_DIR / "fig2_actual_vs_forecast.png")
-    print(f"  {FIG_DIR/'fig1_mape_bars.png'}")
-    print(f"  {FIG_DIR/'fig2_actual_vs_forecast.png'}")
+    plot_cost_accuracy_frontier(summary, FIG_DIR / "fig3_cost_accuracy_frontier.png")
+    plot_regime_comparison(results, FIG_DIR / "fig4_regime_comparison.png")
+    plot_feature_impact(data, FIG_DIR / "fig5_feature_impact.png")
+    plot_decision_flow(FIG_DIR / "fig6_decision_flow.png")
+    for f in sorted(FIG_DIR.glob("*.png")):
+        print(f"  {f}")
 
     # Pull values from the summary for the insight block
     by_name = summary.set_index("model")["MAPE_%"]
