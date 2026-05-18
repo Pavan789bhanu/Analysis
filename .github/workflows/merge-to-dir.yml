@@ -1,0 +1,51 @@
+name: Overwrite Directory on Dev-2
+
+on:
+  workflow_dispatch: # Allows you to run this manually with a button click
+
+jobs:
+  copy-files:
+    runs-on: ubuntu-latest
+    steps:
+      # 1. Checkout the source branch (dev-2)
+      - name: Checkout dev-2
+        uses: actions/checkout@v4
+        with:
+          ref: dev-2
+          path: source_repo
+
+      # 2. Checkout the destination branch (Dev-2)
+      - name: Checkout Dev-2
+        uses: actions/checkout@v4
+        with:
+          ref: Dev-2
+          path: dest_repo
+
+      # 3. Overwrite the target directory
+      - name: Copy and Overwrite files
+        run: |
+          # Create the target folder in the destination branch if it doesn't exist
+          mkdir -p dest_repo/yipitdata
+          
+          # Delete old files inside the destination folder to ensure a clean overwrite
+          rm -rf dest_repo/yipitdata/*
+          
+          # Copy everything from dev-2 root into the Dev-2/yipitdata directory
+          # Excluding hidden git files and the workflow itself
+          rsync -av --exclude='.git' --exclude='.github' source_repo/ dest_repo/yipitdata/
+
+      # 4. Commit and Push the changes back to Dev-2
+      - name: Commit and Push to Dev-2
+        run: |
+          cd dest_repo
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add yipitdata/
+          
+          # Only commit if there are actual changes
+          if ! git diff --cached --quiet; then
+            git commit -m "Overwrite yipitdata directory with updated files from dev-2"
+            git push origin Dev-2
+          else
+            echo "No changes detected."
+          fi
