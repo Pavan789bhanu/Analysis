@@ -1,0 +1,8 @@
+model,MAPE_%,bias_USD_bn,avg_fit_pred_ms,latency_vs_cheapest_x,interpretability,deps,uses_FRED,main_failure_mode
+sarima_walmart_only,1.73,-0.06,10.16,72.6,medium,statsmodels,False,re-estimation can be unstable in volatile regimes
+ridge_walmart_plus_fred,2.01,-1.47,0.56,4.0,medium,sklearn,True,alpha picked by hand; cross-val needed in prod
+seasonal_naive_drift,2.03,-0.13,0.14,1.0,trivial,none,False,trailing drift can over-extrapolate in turning points
+ols_walmart_plus_fred,2.05,-1.16,0.47,3.4,high,sklearn,True,extra FRED data dependency for no measurable gain
+ols_walmart_only,2.1,-1.21,0.62,4.4,high,sklearn,False,"linear, may miss nonlinear shocks"
+gbr_walmart_plus_fred,3.28,-1.65,32.54,232.4,low,sklearn,True,overfits at n≈30; struggles with structural breaks
+seasonal_naive,4.08,-6.13,0.0,0.0,trivial,none,False,lags trend in growth regimes (large negative bias here)
