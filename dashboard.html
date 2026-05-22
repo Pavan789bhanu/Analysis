@@ -1,0 +1,1002 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=1400" />
+<title>Walmart Revenue Forecast — Take-Home Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+  :root {
+    --bg:        #0f1117;
+    --card:      #1a1d27;
+    --text:      #e6e9ef;
+    --muted:     #8a90a2;
+    --accent:    #4f8ef7;
+    --positive:  #2bb673;
+    --negative:  #e2575c;
+    --gold:      #f5b342;
+    --border:    #2d3142;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px;
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                 Inter, "Helvetica Neue", Arial, sans-serif;
+    min-width: 1280px;
+  }
+  header { margin-bottom: 16px; display: flex; align-items: baseline;
+           justify-content: space-between; }
+  h1 { font-size: 22px; font-weight: 600; margin: 0; }
+  header .sub { color: var(--muted); font-size: 13px; }
+
+  .grid { display: grid; gap: 16px; }
+  .row-1 { grid-template-columns: repeat(5, 1fr); }
+  .row-2 { grid-template-columns: 3fr 2fr; }
+  .row-3 { grid-template-columns: 1fr 1fr; }
+  .row-4 { grid-template-columns: 11fr 9fr; }
+  .row + .row { margin-top: 16px; }
+
+  .kpi, .panel {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 18px;
+  }
+  .kpi { display: flex; flex-direction: column; gap: 6px; }
+  .kpi .label {
+    text-transform: uppercase; letter-spacing: 0.08em;
+    font-size: 10.5px; color: var(--muted); font-weight: 600;
+  }
+  .kpi .value { font-size: 22px; font-weight: 600; }
+  .kpi .delta {
+    align-self: flex-start; padding: 2px 8px; border-radius: 12px;
+    font-size: 11px; font-weight: 600;
+  }
+  .delta.green  { background: rgba(43,182,115,0.16); color: var(--positive); }
+  .delta.red    { background: rgba(226,87,92,0.16);  color: var(--negative); }
+  .delta.muted  { background: rgba(138,144,162,0.16); color: var(--muted); }
+
+  .panel h2 {
+    margin: 0 0 12px 0; font-size: 14px; font-weight: 600;
+    color: var(--text); letter-spacing: 0.02em;
+  }
+  .chart-wrap { position: relative; height: 260px; }
+  .chart-wrap.tall { height: 320px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th, td { padding: 6px 8px; text-align: right; border-bottom: 1px solid var(--border); }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--muted); font-weight: 600; text-transform: uppercase;
+       letter-spacing: 0.06em; font-size: 10.5px; }
+  tr.sig td { background: rgba(79,142,247,0.10); }
+  tfoot td { font-weight: 600; color: var(--accent); border-top: 1px solid var(--border); }
+  .check { color: var(--positive); font-weight: 700; }
+  .cross { color: var(--muted); }
+
+  .findings { font-size: 13px; line-height: 1.55; }
+  .findings h3 {
+    font-size: 11.5px; letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--muted); margin: 14px 0 6px 0; font-weight: 600;
+  }
+  .findings h3:first-of-type { margin-top: 4px; }
+  .findings ul { margin: 4px 0 0 0; padding-left: 18px; }
+  .findings li { margin-bottom: 4px; }
+  .findings b { color: var(--text); }
+
+  .regime-table { margin-top: 12px; }
+  .regime-table th, .regime-table td { padding: 5px 8px; font-size: 12px; }
+
+  footer {
+    margin-top: 22px; color: var(--muted); font-size: 11.5px;
+    border-top: 1px solid var(--border); padding-top: 12px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Walmart Revenue Forecast — Leading Indicator Analysis</h1>
+    <div class="sub">FRED RSXFS as a leading indicator for Walmart quarterly revenue · walk-forward out-of-sample evaluation</div>
+  </div>
+  <div class="sub">Generated from <code>analysis_updated.ipynb</code></div>
+</header>
+
+<div class="row grid row-1" id="row-1"></div>
+
+<div class="row grid row-2" style="margin-top: 16px;">
+  <div class="panel">
+    <h2>YoY Growth Rates — FRED Retail vs. Walmart Revenue</h2>
+    <div class="chart-wrap"><canvas id="yoyChart"></canvas></div>
+  </div>
+  <div class="panel">
+    <h2>Cross-Correlation Function — Pre-COVID</h2>
+    <div class="chart-wrap"><canvas id="ccfChart"></canvas></div>
+  </div>
+</div>
+
+<div class="row grid row-3" style="margin-top: 16px;">
+  <div class="panel">
+    <h2>Walk-Forward Predictions vs. Actual — AR-Only (B3) vs OLS+Retail (M1)</h2>
+    <div class="chart-wrap tall"><canvas id="oosChart"></canvas></div>
+  </div>
+  <div class="panel">
+    <h2>Model Comparison — Walk-Forward RMSE (YoY pp, full sample)</h2>
+    <div class="chart-wrap tall"><canvas id="leaderboardChart"></canvas></div>
+  </div>
+</div>
+
+<div class="row grid row-4" style="margin-top: 16px;">
+  <div class="panel">
+    <h2>Pre-COVID OLS Coefficient Summary (in-sample diagnostic, n=34)</h2>
+    <div id="olsTable"></div>
+    <div class="regime-table">
+      <h2 style="margin-top:14px;">RMSE by Regime (walk-forward OOS, YoY pp)</h2>
+      <div id="regimeTable"></div>
+    </div>
+  </div>
+  <div class="panel">
+    <h2>Key Findings &amp; Caveats</h2>
+    <div class="findings" id="findings"></div>
+  </div>
+</div>
+
+<footer>
+  Built from <code>analysis_updated.ipynb</code> (39 walk-forward OOS quarters, 2016 Q3 – 2026 Q1).
+  Charts: Chart.js (CDN). Self-contained — open directly in any browser.
+</footer>
+
+<script>
+const DATA = {
+  "n_total_quarters": 60,
+  "n_oos_folds": 39,
+  "min_train": 20,
+  "first_oos": "2016-07-31",
+  "last_oos": "2026-01-31",
+  "best_model": "AR-Only OLS (B3)",
+  "best_rmse": 2.4641883200630987,
+  "naive_rmse": 2.8518455283265807,
+  "best_mae": 1.8409108610707658,
+  "mape_abs_pp": 0.38765720826348193,
+  "mape_rel_pct": 13.593204975970535,
+  "ccf_peak_lag": 0,
+  "ccf_peak_corr": 0.8435326288406888,
+  "ccf_ci": 0.3313004678535785,
+  "dates_yoy": [
+    "2011Q2",
+    "2011Q3",
+    "2011Q4",
+    "2012Q1",
+    "2012Q2",
+    "2012Q3",
+    "2012Q4",
+    "2013Q1",
+    "2013Q2",
+    "2013Q3",
+    "2013Q4",
+    "2014Q1",
+    "2014Q2",
+    "2014Q3",
+    "2014Q4",
+    "2015Q1",
+    "2015Q2",
+    "2015Q3",
+    "2015Q4",
+    "2016Q1",
+    "2016Q2",
+    "2016Q3",
+    "2016Q4",
+    "2017Q1",
+    "2017Q2",
+    "2017Q3",
+    "2017Q4",
+    "2018Q1",
+    "2018Q2",
+    "2018Q3",
+    "2018Q4",
+    "2019Q1",
+    "2019Q2",
+    "2019Q3",
+    "2019Q4",
+    "2020Q1",
+    "2020Q2",
+    "2020Q3",
+    "2020Q4",
+    "2021Q1",
+    "2021Q2",
+    "2021Q3",
+    "2021Q4",
+    "2022Q1",
+    "2022Q2",
+    "2022Q3",
+    "2022Q4",
+    "2023Q1",
+    "2023Q2",
+    "2023Q3",
+    "2023Q4",
+    "2024Q1",
+    "2024Q2",
+    "2024Q3",
+    "2024Q4",
+    "2025Q1",
+    "2025Q2",
+    "2025Q3",
+    "2025Q4",
+    "2026Q1"
+  ],
+  "retail_yoy": [
+    7.405046440499663,
+    8.104269542720765,
+    7.746074534754754,
+    6.307860464636672,
+    5.987108007968578,
+    3.8805353742222826,
+    4.5183760953161345,
+    4.168044827990913,
+    3.4282644761673975,
+    4.986560572493692,
+    3.444619943002758,
+    2.711246687412827,
+    3.5094137740216302,
+    4.407344598661256,
+    4.733910017264087,
+    3.6814254281986925,
+    1.6976125436480638,
+    2.090060887467704,
+    1.4413495973006674,
+    1.9153436470136675,
+    2.180553420982778,
+    1.7720652154324945,
+    2.4472919008700966,
+    3.989399123514459,
+    4.681495104427769,
+    3.2743177029183945,
+    4.42770607845977,
+    4.942647370639985,
+    4.210400850995044,
+    5.6849792086636874,
+    4.146835670305049,
+    2.0298418753257774,
+    2.3996998025057614,
+    2.7437813751044926,
+    3.027483466898784,
+    3.749990368241396,
+    -5.194835995027258,
+    3.4359599799689278,
+    7.354891047366063,
+    8.851006753279167,
+    26.74169761350267,
+    16.69860354891941,
+    12.338770673571009,
+    13.167288923822618,
+    9.460904068544028,
+    8.678903734471376,
+    8.123870772733666,
+    4.752335682279685,
+    1.7244016856628575,
+    1.120328406509663,
+    2.52147053701548,
+    2.2635614833096396,
+    2.05849440575554,
+    2.3779441598038353,
+    1.9826626674057213,
+    4.301914657352368,
+    4.528725366991426,
+    3.585774278651166,
+    3.8760165619536435,
+    2.7549074520748507
+  ],
+  "revenue_yoy": [
+    4.386290088266831,
+    5.43740238705821,
+    8.115583804143123,
+    5.851667239601244,
+    8.36172724567852,
+    4.3962474626483505,
+    3.242429190934981,
+    3.7403892213138112,
+    1.0363061443211308,
+    2.325398076619889,
+    1.6590509666080777,
+    1.5104557976458821,
+    0.7793391834909791,
+    2.821217334737103,
+    2.8637369476522956,
+    1.4332413303933533,
+    -0.11656228253305034,
+    0.08657648283039165,
+    -1.3386442130738363,
+    -1.442632919089426,
+    0.9388117673697627,
+    0.5198413028470572,
+    0.6566843826655733,
+    0.9786607232372235,
+    1.4132385422418459,
+    0.9060519304284531,
+    4.230870120749031,
+    4.071454756522264,
+    4.379711081996218,
+    4.984870724647195,
+    1.392282775473097,
+    1.8537136650840003,
+    1.0066020050533808,
+    1.0622676289561594,
+    2.4797027879641886,
+    2.073591607645908,
+    7.865241073229767,
+    6.456549293597558,
+    4.501097733434389,
+    5.92640695696367,
+    2.6086240947992057,
+    2.400139391035405,
+    5.063849512530649,
+    -0.6910246756448801,
+    2.281293972688636,
+    8.373745108048315,
+    7.787938089307955,
+    8.209756424880887,
+    7.638572080291972,
+    4.854800829522632,
+    5.261802745116162,
+    6.603416736427614,
+    5.916399565574415,
+    4.671200399301223,
+    5.371333237162812,
+    7.77307258280302,
+    2.527854543635666,
+    5.743084158386336,
+    6.8409492687630635,
+    0.13871122697366456
+  ],
+  "ccf_lags": [
+    -4,
+    -3,
+    -2,
+    -1,
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "ccf_values": [
+    0.14356088914003964,
+    0.35516713095125074,
+    0.5331010794715886,
+    0.6596756605373127,
+    0.8435326288406888,
+    0.7883047601762934,
+    0.7398318158723743,
+    0.6169185304169466,
+    0.4457140145676169
+  ],
+  "oos_dates": [
+    "2016Q3",
+    "2016Q4",
+    "2017Q1",
+    "2017Q2",
+    "2017Q3",
+    "2017Q4",
+    "2018Q1",
+    "2018Q2",
+    "2018Q3",
+    "2018Q4",
+    "2019Q1",
+    "2019Q2",
+    "2019Q3",
+    "2019Q4",
+    "2020Q1",
+    "2020Q2",
+    "2020Q3",
+    "2020Q4",
+    "2021Q1",
+    "2021Q2",
+    "2021Q3",
+    "2021Q4",
+    "2022Q1",
+    "2022Q2",
+    "2022Q3",
+    "2022Q4",
+    "2023Q1",
+    "2023Q2",
+    "2023Q3",
+    "2023Q4",
+    "2024Q1",
+    "2024Q2",
+    "2024Q3",
+    "2024Q4",
+    "2025Q1",
+    "2025Q2",
+    "2025Q3",
+    "2025Q4",
+    "2026Q1"
+  ],
+  "actual_oos": [
+    0.5198413028470572,
+    0.6566843826655733,
+    0.9786607232372235,
+    1.4132385422418459,
+    0.9060519304284531,
+    4.230870120749031,
+    4.071454756522264,
+    4.379711081996218,
+    4.984870724647195,
+    1.392282775473097,
+    1.8537136650840003,
+    1.0066020050533808,
+    1.0622676289561594,
+    2.4797027879641886,
+    2.073591607645908,
+    7.865241073229767,
+    6.456549293597558,
+    4.501097733434389,
+    5.92640695696367,
+    2.6086240947992057,
+    2.400139391035405,
+    5.063849512530649,
+    -0.6910246756448801,
+    2.281293972688636,
+    8.373745108048315,
+    7.787938089307955,
+    8.209756424880887,
+    7.638572080291972,
+    4.854800829522632,
+    5.261802745116162,
+    6.603416736427614,
+    5.916399565574415,
+    4.671200399301223,
+    5.371333237162812,
+    7.77307258280302,
+    2.527854543635666,
+    5.743084158386336,
+    6.8409492687630635,
+    0.13871122697366456
+  ],
+  "pred_ar": [
+    1.4837478783471885,
+    0.9263086775142696,
+    0.42034996438916467,
+    1.2180321331695527,
+    1.687754115352569,
+    1.1874186618963287,
+    3.315715208886013,
+    3.664288072906188,
+    3.904898696620091,
+    4.861078308528779,
+    1.2714921190709945,
+    2.062322507977347,
+    1.4601781784587742,
+    1.386673690113271,
+    2.158453772251058,
+    2.0944695028852474,
+    6.478979356348144,
+    5.495779917282182,
+    3.6059495091156766,
+    5.576775128525369,
+    2.6237788926778753,
+    2.432536441917883,
+    4.17803829894836,
+    0.6894500260602986,
+    2.4203648711017856,
+    6.38830979228376,
+    5.3784017765046706,
+    6.809842378008854,
+    6.602950199137882,
+    4.426716859485223,
+    4.062783877327356,
+    5.811185270522275,
+    5.257126314151322,
+    4.382897225114156,
+    4.355183678346802,
+    6.69799823607812,
+    2.902948050668446,
+    5.117215038896975,
+    5.527567200578897
+  ],
+  "pred_ols": [
+    0.31419661586214187,
+    -0.612522171107189,
+    -0.08249483510295474,
+    2.310232195195791,
+    3.093095243485432,
+    1.3186682827360705,
+    2.670345112907108,
+    3.532365960697769,
+    2.8945652710237075,
+    4.853288620632272,
+    1.9712611283444375,
+    0.7704787844517613,
+    0.8989642400769047,
+    0.9849641837631982,
+    1.411450029582846,
+    2.1965054259815338,
+    -2.837414976041458,
+    5.212358620785674,
+    4.024670407589872,
+    6.2823709818517,
+    5.223438573159125,
+    2.696834338476755,
+    4.5666846384774615,
+    0.8418356158906616,
+    2.545195324747019,
+    6.498175192479019,
+    5.469936766153553,
+    6.686188420519423,
+    6.314217595321856,
+    4.132981816233999,
+    3.879615607154025,
+    5.6368895289374095,
+    5.078818163377569,
+    4.233817995214059,
+    4.194693555324054,
+    6.660483716728901,
+    2.8860327331761217,
+    5.053854308886207,
+    5.479302405466158
+  ],
+  "pred_naive": [
+    3.013368348778789,
+    2.908431339252928,
+    2.2186241339729724,
+    2.1999244116654686,
+    2.597780507790167,
+    2.5331401798217024,
+    2.0119635655170143,
+    2.068810100094865,
+    2.3561049967384937,
+    2.7756730285256066,
+    2.3061765928034785,
+    2.3989388117950585,
+    2.684700712727081,
+    2.6027492468940427,
+    2.249618726838544,
+    2.2248967109523483,
+    2.504430370085868,
+    2.589077418124059,
+    2.2300601580393624,
+    2.851601640094284,
+    2.8996422624370366,
+    2.780279449655092,
+    2.5996948379317932,
+    2.8273038855647763,
+    2.854232910491434,
+    2.9878767280983243,
+    2.300538518515732,
+    2.7776666207578544,
+    3.314192260287841,
+    3.3878818415324603,
+    2.7929733440461617,
+    3.182742075719031,
+    3.43270061176744,
+    3.5320296033465914,
+    3.0860843742293502,
+    3.393023421092522,
+    3.521164882305567,
+    3.6634084343334643,
+    3.420869246270326
+  ],
+  "pred_ridge": [
+    0.28781895597610285,
+    -0.5415136861199956,
+    0.17793461657270404,
+    2.1994369426289415,
+    2.9723119834862852,
+    1.280817870822427,
+    2.836057841241443,
+    3.5117760132354894,
+    2.912255890586829,
+    4.780861476219858,
+    2.0400193524236614,
+    0.775640930635598,
+    0.8826723902850393,
+    0.9864682001921841,
+    1.5296778613425182,
+    2.17037582925643,
+    -2.637580668470809,
+    5.175739040650291,
+    4.1469337189563955,
+    6.1889596189060105,
+    5.176972531956406,
+    2.6968103382617654,
+    4.615222347578031,
+    0.7958258508292597,
+    2.515761266520426,
+    6.425610295183748,
+    5.642932338330008,
+    6.605953451539936,
+    6.239979511585737,
+    4.089624489466681,
+    4.014835735784108,
+    5.585087097546971,
+    5.0416049833699415,
+    4.201239470447822,
+    4.291156549700384,
+    6.625678134125255,
+    2.875058321542232,
+    5.030358778497611,
+    5.525939272535227
+  ],
+  "models": [
+    "B1 Seasonal (FQ mean)",
+    "B2 Hist mean",
+    "B3 AR-only OLS",
+    "M1 OLS+retail",
+    "M2 Ridge+retail"
+  ],
+  "rmse": [
+    2.8518455283265807,
+    2.7551935537879952,
+    2.4641883200630987,
+    2.970965429656077,
+    2.9376191151489786
+  ],
+  "best_model_idx": 2,
+  "regime_table": [
+    {
+      "regime": "Pre-COVID",
+      "n": 14,
+      "b1": 1.7399785942726356,
+      "b3": 1.4221139240309073,
+      "m1": 1.6519993331718266
+    },
+    {
+      "regime": "COVID",
+      "n": 12,
+      "b1": 3.353335585054209,
+      "b3": 3.150537061408222,
+      "m1": 4.237673151836409
+    },
+    {
+      "regime": "Post-2023",
+      "n": 13,
+      "b1": 3.2800588891142732,
+      "b3": 2.6222776580687253,
+      "m1": 2.639010270879617
+    },
+    {
+      "regime": "Full",
+      "n": 39,
+      "b1": 2.8518455283265807,
+      "b3": 2.4641883200630987,
+      "m1": 2.970965429656077
+    }
+  ],
+  "ols_table": [
+    {
+      "feature": "const",
+      "coef": -1.5210569161614342,
+      "se": 0.9284392004009445,
+      "tstat": -1.6382945867694612,
+      "pvalue": 0.11255069935115815
+    },
+    {
+      "feature": "f_retail_lag1",
+      "coef": 0.7403632762992711,
+      "se": 0.28360015467584826,
+      "tstat": 2.610588407984114,
+      "pvalue": 0.014356204226269204
+    },
+    {
+      "feature": "f_wmt_ar1",
+      "coef": 0.2786904021737951,
+      "se": 0.2089298809689491,
+      "tstat": 1.3338944189376805,
+      "pvalue": 0.19298755956060962
+    },
+    {
+      "feature": "f_Q1",
+      "coef": 0.3661683641598126,
+      "se": 0.7518243066130913,
+      "tstat": 0.48703980562875376,
+      "pvalue": 0.6300212787298352
+    },
+    {
+      "feature": "f_Q2",
+      "coef": 0.41821263568051703,
+      "se": 0.7286009068830895,
+      "tstat": 0.5739941190433118,
+      "pvalue": 0.5705544232277332
+    },
+    {
+      "feature": "f_Q3",
+      "coef": 0.37307167589457535,
+      "se": 0.7282979667766641,
+      "tstat": 0.5122514313004796,
+      "pvalue": 0.6124922279368789
+    }
+  ],
+  "ols_r2": 0.6491412829369301,
+  "ols_adj_r2": 0.586487940604239,
+  "ols_dw": 2.3807541504542313,
+  "incremental_r2": 0.08539865881816455,
+  "partial_F": 6.815171835901045,
+  "partial_p": 0.014356204226269043,
+  "corr_regime_table": [
+    {
+      "regime": "Pre-COVID",
+      "n": 35,
+      "r_lag0": 0.8435326288406888,
+      "r_lag1": 0.7883047601762934
+    },
+    {
+      "regime": "COVID",
+      "n": 12,
+      "r_lag0": -0.49785424730140093,
+      "r_lag1": -0.4627601086106144
+    },
+    {
+      "regime": "Post-2023",
+      "n": 13,
+      "r_lag0": 0.12332879966470506,
+      "r_lag1": -0.16850611389301018
+    },
+    {
+      "regime": "Full sample",
+      "n": 60,
+      "r_lag0": 0.054694784466506496,
+      "r_lag1": 0.0990102194181615
+    }
+  ],
+  "verdict_html": "The best out-of-sample model is <b>AR-Only OLS (B3)</b> \u2014 walk-forward RMSE <b>2.46 pp</b> vs. <b>2.85 pp</b> for the seasonal-naive baseline (B1) over 39 OOS quarters. <b>OLS+retail (M1) does not beat AR-only (B3) in any regime</b>: pre-COVID 1.65 vs 1.42, COVID 4.24 vs 3.15, post-2023 2.64 vs 2.62.",
+  "when_works": [
+    "Against the seasonal-naive (B1): retail helps pre-COVID (+5.1% RMSE) and post-2023 (+19.5%).",
+    "Against AR-only (B3): retail does not improve forecasts in any regime \u2014 pre-COVID gap is -16.2%, COVID -34.5%, post-2023 -0.6%."
+  ]
+};
+
+/* ─── Row 1 — KPI cards ───────────────────────────────────────────── */
+const row1 = document.getElementById('row-1');
+const kpis = [
+  {label: 'Best Model',           value: DATA.best_model, delta: null},
+  {label: 'Walk-Forward RMSE',    value: DATA.best_rmse.toFixed(2) + ' pp',
+   delta: {text: '−' + DATA.mape_abs_pp.toFixed(2) + ' pp vs naive', cls: 'green'}},
+  {label: 'Walk-Forward MAE',     value: DATA.best_mae.toFixed(2) + ' pp', delta: null},
+  {label: 'RMSE vs. Naive',       value: (DATA.mape_abs_pp >= 0 ? '+' : '') + DATA.mape_abs_pp.toFixed(2) + ' pp',
+   delta: {text: DATA.mape_rel_pct.toFixed(1) + '% relative', cls: 'green'}},
+  {label: 'Pre-COVID CCF Peak',   value: 'Lag ' + (DATA.ccf_peak_lag >= 0 ? '+' : '') + DATA.ccf_peak_lag + 'Q',
+   delta: {text: 'r = ' + DATA.ccf_peak_corr.toFixed(3), cls: 'muted'}},
+];
+for (const k of kpis) {
+  const div = document.createElement('div');
+  div.className = 'kpi';
+  div.innerHTML =
+    `<div class="label">${k.label}</div>
+     <div class="value">${k.value}</div>` +
+    (k.delta ? `<div class="delta ${k.delta.cls}">${k.delta.text}</div>`
+             : `<div class="delta muted">&mdash;</div>`);
+  row1.appendChild(div);
+}
+
+/* ─── Row 2 — YoY chart with COVID shading ────────────────────────── */
+new Chart(document.getElementById('yoyChart'), {
+  type: 'line',
+  data: {
+    labels: DATA.dates_yoy,
+    datasets: [
+      {label: 'FRED retail YoY %',
+       data: DATA.retail_yoy, borderColor: '#4f8ef7',
+       backgroundColor: '#4f8ef7', tension: 0.2, pointRadius: 1, borderWidth: 1.8},
+      {label: 'Walmart revenue YoY %',
+       data: DATA.revenue_yoy, borderColor: '#f5803e',
+       backgroundColor: '#f5803e', tension: 0.2, pointRadius: 1, borderWidth: 1.8},
+    ]
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    interaction: {mode: 'index', intersect: false},
+    plugins: {
+      legend: {labels: {color: '#e6e9ef'}},
+      tooltip: {callbacks: {label: c => c.dataset.label + ': ' + c.parsed.y.toFixed(2) + '%'}},
+    },
+    scales: {
+      x: {ticks: {color: '#8a90a2', maxRotation: 0, autoSkipPadding: 16}, grid: {color: '#232636'}},
+      y: {ticks: {color: '#8a90a2', callback: v => v + '%'}, grid: {color: '#232636'},
+          title: {display: true, text: 'YoY growth (%)', color: '#8a90a2'}},
+    }
+  },
+  plugins: [{
+    id: 'covid-shade',
+    beforeDraw(chart) {
+      const {ctx, chartArea, scales: {x}} = chart;
+      if (!chartArea) return;
+      const startIdx = DATA.dates_yoy.indexOf('2020Q1');
+      const endIdx   = DATA.dates_yoy.indexOf('2020Q2');
+      if (startIdx < 0 || endIdx < 0) return;
+      const x0 = x.getPixelForValue(startIdx);
+      const x1 = x.getPixelForValue(endIdx);
+      ctx.save();
+      ctx.fillStyle = 'rgba(226,87,92,0.18)';
+      ctx.fillRect(x0, chartArea.top, x1 - x0, chartArea.bottom - chartArea.top);
+      ctx.fillStyle = '#e2575c';
+      ctx.font = '600 11px -apple-system, sans-serif';
+      ctx.fillText('COVID-19 Shock', x0 + 4, chartArea.top + 14);
+      ctx.restore();
+    }
+  }]
+});
+
+/* ─── Row 2 — CCF chart with gold highlight on peak ───────────────── */
+const peakIdx = DATA.ccf_lags.indexOf(DATA.ccf_peak_lag);
+const ccfColors  = DATA.ccf_values.map((v, i) => v < 0 ? '#e2575c' : '#4f8ef7');
+const ccfBorders = DATA.ccf_values.map((v, i) => i === peakIdx ? '#f5b342' : 'rgba(255,255,255,0.0)');
+const ccfBW      = DATA.ccf_values.map((v, i) => i === peakIdx ? 3 : 0);
+
+new Chart(document.getElementById('ccfChart'), {
+  type: 'bar',
+  data: {
+    labels: DATA.ccf_lags.map(l => 'Lag ' + (l>=0?'+':'') + l + 'Q'),
+    datasets: [{label: 'CCF', data: DATA.ccf_values,
+                backgroundColor: ccfColors, borderColor: ccfBorders, borderWidth: ccfBW}]
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: {
+      legend: {display: false},
+      tooltip: {callbacks: {label: c => 'r = ' + c.parsed.y.toFixed(3)}},
+    },
+    scales: {
+      x: {ticks: {color: '#8a90a2'}, grid: {color: '#232636'}},
+      y: {ticks: {color: '#8a90a2'}, grid: {color: '#232636'},
+          suggestedMin: -0.5, suggestedMax: 1.0,
+          title: {display: true, text: 'Cross-correlation (pre-COVID)', color: '#8a90a2'}},
+    }
+  },
+  plugins: [{
+    id: 'ccf-ci',
+    afterDraw(chart) {
+      const {ctx, chartArea, scales: {y}} = chart;
+      if (!chartArea) return;
+      const ci = DATA.ccf_ci;
+      ctx.save();
+      ctx.strokeStyle = '#8a90a2'; ctx.lineWidth = 1; ctx.setLineDash([5, 4]);
+      const yUp   = y.getPixelForValue(ci);
+      const yDown = y.getPixelForValue(-ci);
+      ctx.beginPath(); ctx.moveTo(chartArea.left, yUp);   ctx.lineTo(chartArea.right, yUp);   ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(chartArea.left, yDown); ctx.lineTo(chartArea.right, yDown); ctx.stroke();
+      ctx.fillStyle = '#8a90a2';
+      ctx.font = '10px -apple-system, sans-serif';
+      ctx.fillText('95% CI ±' + ci.toFixed(2), chartArea.right - 78, yUp - 4);
+      ctx.restore();
+    }
+  }]
+});
+
+/* ─── Row 3 — OOS chart (actual / AR / OLS+retail / naive) ────────── */
+new Chart(document.getElementById('oosChart'), {
+  type: 'line',
+  data: {
+    labels: DATA.oos_dates,
+    datasets: [
+      {label: 'Actual Walmart YoY %',
+       data: DATA.actual_oos, borderColor: '#e6e9ef',
+       backgroundColor: '#e6e9ef', borderWidth: 2, tension: 0.15, pointRadius: 2},
+      {label: 'AR-only (B3) prediction',
+       data: DATA.pred_ar, borderColor: '#4f8ef7',
+       backgroundColor: '#4f8ef7', borderWidth: 2, tension: 0.15, pointRadius: 2},
+      {label: 'OLS+retail (M1) prediction',
+       data: DATA.pred_ols, borderColor: '#f5803e',
+       backgroundColor: '#f5803e', borderWidth: 1.7, borderDash: [6,4], tension: 0.15, pointRadius: 2},
+      {label: 'Seasonal-naive (B1) prediction',
+       data: DATA.pred_naive, borderColor: '#8a90a2',
+       backgroundColor: '#8a90a2', borderWidth: 1.5, borderDash: [2,3], tension: 0.15, pointRadius: 1},
+    ]
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    interaction: {mode: 'index', intersect: false},
+    plugins: {
+      legend: {labels: {color: '#e6e9ef'}},
+      tooltip: {callbacks: {label: c => c.dataset.label + ': ' + c.parsed.y.toFixed(2) + '%'}},
+    },
+    scales: {
+      x: {ticks: {color: '#8a90a2', maxRotation: 0, autoSkipPadding: 12}, grid: {color: '#232636'}},
+      y: {ticks: {color: '#8a90a2', callback: v => v + '%'}, grid: {color: '#232636'},
+          title: {display: true, text: 'Walmart revenue YoY (%)', color: '#8a90a2'}},
+    }
+  }
+});
+
+/* ─── Row 3 — Model leaderboard ───────────────────────────────────── */
+const palette = ['#8a90a2', '#94a3b8', '#4f8ef7', '#f5803e', '#2bb673'];
+const colors  = DATA.models.map((m, i) =>
+  i === DATA.best_model_idx ? '#4f8ef7' : palette[i]);
+new Chart(document.getElementById('leaderboardChart'), {
+  type: 'bar',
+  data: {
+    labels: DATA.models,
+    datasets: [{label: 'Walk-Forward RMSE (pp)', data: DATA.rmse,
+                backgroundColor: colors, borderColor: colors, borderWidth: 1}]
+  },
+  options: {
+    indexAxis: 'y',
+    responsive: true, maintainAspectRatio: false,
+    plugins: {
+      legend: {display: false},
+      tooltip: {callbacks: {label: c => c.parsed.x.toFixed(2) + ' pp'}},
+    },
+    scales: {
+      x: {ticks: {color: '#8a90a2'}, grid: {color: '#232636'},
+          title: {display: true, text: 'RMSE (YoY pp)', color: '#8a90a2'}},
+      y: {ticks: {color: '#e6e9ef'}, grid: {color: '#232636'}},
+    }
+  },
+  plugins: [{
+    id: 'bar-labels',
+    afterDatasetsDraw(chart) {
+      const {ctx} = chart;
+      const ds = chart.getDatasetMeta(0);
+      ctx.fillStyle = '#e6e9ef';
+      ctx.font = '600 11.5px -apple-system, sans-serif';
+      ds.data.forEach((bar, i) => {
+        const val = DATA.rmse[i].toFixed(2);
+        ctx.fillText(val, bar.x + 6, bar.y + 4);
+      });
+    }
+  }]
+});
+
+/* ─── Row 4 — OLS coefficient table ──────────────────────────────── */
+const featureLabel = {
+  'const': 'Intercept', 'f_retail_lag1': 'retail_lag1',
+  'f_wmt_ar1': 'wmt_ar1', 'f_Q1': 'FY-Q1 dummy',
+  'f_Q2': 'FY-Q2 dummy', 'f_Q3': 'FY-Q3 dummy',
+};
+const olsRows = DATA.ols_table.map(r => {
+  const sig = r.pvalue < 0.05;
+  const fmt = (v, d=4) => v.toFixed(d);
+  return `<tr class="${sig ? 'sig' : ''}">
+    <td>${featureLabel[r.feature] || r.feature}</td>
+    <td>${fmt(r.coef)}</td><td>${fmt(r.se)}</td>
+    <td>${fmt(r.tstat, 3)}</td>
+    <td>${r.pvalue < 0.0001 ? '&lt;0.0001' : fmt(r.pvalue)}</td>
+    <td>${sig ? '<span class="check">✓</span>' : '<span class="cross">✗</span>'}</td>
+  </tr>`;
+}).join('');
+
+document.getElementById('olsTable').innerHTML = `
+  <table>
+    <thead>
+      <tr><th>Feature</th><th>Coefficient</th><th>Std Error</th>
+          <th>t-stat</th><th>p-value</th><th>p&lt;0.05</th></tr>
+    </thead>
+    <tbody>${olsRows}</tbody>
+    <tfoot>
+      <tr>
+        <td>R² = ${DATA.ols_r2.toFixed(3)}</td>
+        <td>Adj R² = ${DATA.ols_adj_r2.toFixed(3)}</td>
+        <td>DW = ${DATA.ols_dw.toFixed(2)}</td>
+        <td colspan="3">ΔR² (vs AR+season) = ${DATA.incremental_r2.toFixed(3)}, partial F = ${DATA.partial_F.toFixed(2)}, p = ${DATA.partial_p.toFixed(4)}</td>
+      </tr>
+    </tfoot>
+  </table>`;
+
+/* ─── Row 4 — Regime RMSE table ──────────────────────────────────── */
+const regimeRows = DATA.regime_table.map(r => {
+  const best = Math.min(r.b1, r.b3, r.m1);
+  const cell = v => `<td${Math.abs(v - best) < 1e-9 ? ' style="color:#2bb673;font-weight:600;"' : ''}>${v.toFixed(2)}</td>`;
+  return `<tr><td>${r.regime}</td><td>${r.n}</td>${cell(r.b1)}${cell(r.b3)}${cell(r.m1)}</tr>`;
+}).join('');
+document.getElementById('regimeTable').innerHTML = `
+  <table>
+    <thead>
+      <tr><th>Regime</th><th>n</th><th>B1 (FQ mean)</th><th>B3 (AR-only)</th><th>M1 (OLS+retail)</th></tr>
+    </thead>
+    <tbody>${regimeRows}</tbody>
+  </table>`;
+
+/* ─── Row 4 — Findings panel ─────────────────────────────────────── */
+document.getElementById('findings').innerHTML = `
+  <h3>Verdict</h3>
+  <div>${DATA.verdict_html}</div>
+  <h3>When the signal helps</h3>
+  <ul>${DATA.when_works.map(t => '<li>' + t + '</li>').join('')}</ul>
+  <h3>Watch out for</h3>
+  <ul>
+    <li><b>COVID regime inversion.</b> Rolling 8-quarter correlation went from +0.75 pre-COVID to −0.71 in COVID and has not recovered. Models without a regime rule inherit this risk.</li>
+    <li><b>Reporting / publication lag.</b> Walmart files ~5–6 weeks after quarter end; FRED's first-print advance estimate is revised ~±0.5%. Use lag-1 features for true real-time forecasts.</li>
+    <li><b>Inflation confounding.</b> Long-rolling retail features had full-sample r ≈ 0.39 but pre-COVID r ≈ 0.07 — they pick up nominal trend, not consumer signal. Dropped.</li>
+  </ul>`;
+</script>
+</body>
+</html>
